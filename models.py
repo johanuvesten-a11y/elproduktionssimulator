@@ -11,6 +11,7 @@ class PowerTech:
     marginal_cost: float      # Marginalkostnad för Merit Order (SEK / MWh)
     base_cap_factor: float    # Kapacitetsfaktor (0.0 - 1.0)
     is_variable: bool         # Väderberoende (sol/vind)
+    max_capacity_mw: float    # Max tillåten kapacitet i Sverige (MW)
 
 @dataclass
 class ConstructionProject:
@@ -18,6 +19,7 @@ class ConstructionProject:
     capacity_mw: float
     years_remaining: int
     total_capex: float
+    is_refurbishment: bool = False
 
 @dataclass
 class PlantFleet:
