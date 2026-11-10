@@ -128,6 +128,86 @@ with tab1:
 
     st.divider()
     
-    # Kör simulering
+    # 4. Kör simulering
     st.subheader("4. Kör simulering")
-    if st.button("⏩ Simulera
+    if st.button("⏩ Simulera nästa år (1 år framåt)", type="primary", use_container_width=True):
+        res = sim.run_year()
+        st.session_state.history.append(res)
+        st.rerun()
+
+# ------------------------------------------------------------------------------
+# FLIK 2: RESULTAT, EKONOMI & HISTORIK
+# ------------------------------------------------------------------------------
+with tab2:
+    st.header("📊 Resultat, Ekonomi & Historik")
+    
+    if not st.session_state.history:
+        st.info("Ingen simulering har körts än. Gå till fliken **Översikt & Investering** och klicka på **Simulera nästa år**.")
+    else:
+        latest = st.session_state.history[-1]
+        
+        st.subheader(f"Årsrapport för År {latest['year']}")
+        
+        m1, m2, m3, m4 = st.columns(4)
+        m1.metric("Elbehov", f"{latest['demand_twh']:.1f} TWh")
+        m2.metric("Produktion", f"{latest['produced_twh']:.1f} TWh")
+        m3.metric("Medelpris", f"{latest['avg_price_sek']:.1f} SEK/MWh")
+        m4.metric("Nettoresultat", f"{latest['net_profit_msek']:,.1f} MSEK".replace(",", " "))
+
+        if latest['blackout_hours'] > 0:
+            st.error(f"🚨 **Varning:** Nätet drabbades av **{latest['blackout_hours']} timmars effektbrist** under året!")
+        else:
+            st.success("✅ **Stabil elförsörjning:** Inga timmar med effektbrist uppstod.")
+
+        if latest['retired_mw'] > 0:
+            st.warning(f"ℹ️ **Avveckling:** {latest['retired_mw']:,.0f} MW anläggningar nådde sin livslängd och togs ur bruk.".replace(",", " "))
+
+        st.divider()
+        
+        # Snygg historisk tabell med svenska rubriker och enhetsformatering
+        st.subheader("📜 Historisk årsöversikt")
+        
+        df_history = pd.DataFrame(st.session_state.history)
+        
+        column_mapping = {
+            "year": "År",
+            "demand_twh": "Elbehov (TWh)",
+            "produced_twh": "Produktion (TWh)",
+            "avg_price_sek": "Medelpris (SEK/MWh)",
+            "revenue_msek": "Intäkter (MSEK)",
+            "net_profit_msek": "Nettoresultat (MSEK)",
+            "blackout_hours": "Effektbrist (timmar)",
+            "retired_mw": "Avvecklad effekt (MW)",
+            "budget_msek": "Kvarvarande budget (MSEK)"
+        }
+        
+        df_display = df_history.rename(columns=column_mapping)
+        
+        st.dataframe(
+            df_display,
+            use_container_width=True,
+            hide_index=True,
+            column_config={
+                "År": st.column_config.NumberColumn("År", format="%d"),
+                "Elbehov (TWh)": st.column_config.NumberColumn("Elbehov", format="%.2f TWh"),
+                "Produktion (TWh)": st.column_config.NumberColumn("Produktion", format="%.2f TWh"),
+                "Medelpris (SEK/MWh)": st.column_config.NumberColumn("Medelpris", format="%.1f SEK"),
+                "Intäkter (MSEK)": st.column_config.NumberColumn("Intäkter", format="%,.1f MSEK"),
+                "Nettoresultat (MSEK)": st.column_config.NumberColumn("Nettoresultat", format="%,.1f MSEK"),
+                "Effektbrist (timmar)": st.column_config.NumberColumn("Effektbrist", format="%d tim"),
+                "Avvecklad effekt (MW)": st.column_config.NumberColumn("Avvecklat", format="%,.0f MW"),
+                "Kvarvarande budget (MSEK)": st.column_config.NumberColumn("Budget", format="%,.1f MSEK"),
+            }
+        )
+
+        st.divider()
+        st.subheader("📈 Trendanalys över tid")
+        
+        chart_col1, chart_col2 = st.columns(2)
+        with chart_col1:
+            st.markdown("**Elprisutveckling (SEK/MWh)**")
+            st.line_chart(df_display.set_index("År")[["Medelpris (SEK/MWh)"]])
+            
+        with chart_col2:
+            st.markdown("**Produktion vs Elbehov (TWh)**")
+            st.line_chart(df_display.set_index("År")[["Elbehov (TWh)", "Produktion (TWh)"]])
