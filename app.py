@@ -8,7 +8,7 @@ st.set_page_config(page_title="Sveriges Elsimulator", layout="wide")
 st.title("⚡ Sveriges Elproduktionssimulator")
 st.caption("Modellera Sveriges elförsörjning och investera i framtidens kraftslag.")
 
-# Spara simulatorn i sessionsminnet så att tillståndet behålls mellan klick
+# Initalisera simulator och historik i sessionsminnet
 if "sim" not in st.session_state:
     st.session_state.sim = SimulationEngine()
     st.session_state.history = []
@@ -28,6 +28,14 @@ if not sim.construction_queue:
 else:
     for c in sim.construction_queue:
         st.sidebar.write(f"• **{c.capacity_mw:.0f} MW {c.tech_name}** ({c.years_remaining} år kvar)")
+
+st.sidebar.divider()
+
+# Knapp för att återställa spelet
+if st.sidebar.button("🔄 Börja om spelet", type="secondary", use_container_width=True):
+    st.session_state.sim = SimulationEngine()
+    st.session_state.history = []
+    st.rerun()
 
 # Huvudområde: Flikar för Investering och Resultat
 tab1, tab2 = st.tabs(["🏗️ Investera & Bygg", "📊 Simuleringsresultat"])
