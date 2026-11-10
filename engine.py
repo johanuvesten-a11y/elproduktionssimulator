@@ -1,7 +1,7 @@
 import random
 from typing import List, Dict, Tuple
 from models import PlantFleet, ConstructionProject
-from config import TECH_CATALOG
+from config import TECH_CATALOG, START_FLEET
 
 class SimulationEngine:
     def __init__(self):
