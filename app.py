@@ -81,83 +81,121 @@ with tab1:
 
     st.divider()
 
-    # 2. Teknikkatalog & Jämförelsetabell
+# 2. Teknikkatalog & Jämförelsetabell med Kapacitetstak
     st.subheader("2. Jämförelse av alla kraftslag & Investeringskalkyl")
     
     catalog_list = []
     for key, t in TECH_CATALOG.items():
+        installed = sim.get_installed_capacity(key)
         catalog_list.append({
             "Kraftslag": t.name,
+            "Installerad / Tak": f"{installed:,.0f} / {t.max_capacity_mw:,.0f} MW".replace(",", " "),
             "Investering": t.capex_per_mw,
             "Fast drift": t.opex_fix_per_mw,
             "Byggtid": t.build_time_years,
             "Livslängd": t.lifespan_years,
             "Marginalkostnad": t.marginal_cost,
             "Kapacitetsfaktor": t.base_cap_factor,
-            "Väderberoende": "Ja" if t.is_variable else "Nej"
         })
     
     df_cat = pd.DataFrame(catalog_list)
     
-    # Formaterad tabell med renare rubriker och grafisk framstegsindikator
     st.dataframe(
         df_cat,
         use_container_width=True,
         hide_index=True,
         column_config={
             "Kraftslag": st.column_config.TextColumn("Kraftslag", width="medium"),
+            "Installerad / Tak": st.column_config.TextColumn("Nuvarande / Max Tak", width="medium"),
             "Investering": st.column_config.NumberColumn("Investering", format="%.1f MSEK/MW"),
             "Fast drift": st.column_config.NumberColumn("Fast drift", format="%.2f MSEK/MW/år"),
             "Byggtid": st.column_config.NumberColumn("Byggtid", format="%d år"),
             "Livslängd": st.column_config.NumberColumn("Livslängd", format="%d år"),
             "Marginalkostnad": st.column_config.NumberColumn("Marginalkostnad", format="%.0f SEK/MWh"),
             "Kapacitetsfaktor": st.column_config.ProgressColumn("Kapacitetsutnyttjande", format="%.0f%%", min_value=0.0, max_value=1.0),
-            "Väderberoende": st.column_config.TextColumn("Väderberoende", width="small")
         }
     )
     
     st.divider()
 
-    # 3. Investeringsformulär
-    st.subheader("3. Bygg ny produktionskapacitet")
-    col_inv1, col_inv2 = st.columns(2)
+    # 3. Investera / Renovera Formulär
+    st.subheader("3. Utbyggnad & Livstidsförlängning")
     
-    with col_inv1:
-        tech_choice = st.selectbox(
-            "Välj kraftslag att bygga:",
-            options=list(TECH_CATALOG.keys()),
-            format_func=lambda x: TECH_CATALOG[x].name
-        )
-        tech_info = TECH_CATALOG[tech_choice]
-        
-        st.info(
-            f"**Teknikfakta ({tech_info.name}):**  \n"
-            f"• **Investeringskostnad:** {tech_info.capex_per_mw:.1f} MSEK / MW  \n"
-            f"• **Byggtid:** {tech_info.build_time_years} år  \n"
-            f"• **Marginalkostnad:** {tech_info.marginal_cost:.0f} SEK / MWh  \n"
-            f"• **Kapacitetsutnyttjande:** {tech_info.base_cap_factor*100:.0f}%"
-        )
+    inv_tab1, inv_tab2 = st.tabs(["🏗️ Bygg nytt kraftslag", "🔧 Renovera befintliga verk"])
+    
+    with inv_tab1:
+        col_inv1, col_inv2 = st.columns(2)
+        with col_inv1:
+            tech_choice = st.selectbox(
+                "Välj kraftslag att bygga:",
+                options=list(TECH_CATALOG.keys()),
+                format_func=lambda x: TECH_CATALOG[x].name,
+                key="build_select"
+            )
+            tech_info = TECH_CATALOG[tech_choice]
+            curr_cap = sim.get_installed_capacity(tech_choice)
+            
+            st.info(
+                f"**Fakta ({tech_info.name}):**  \n"
+                f"• **Kapacitetstak:** {curr_cap:,.0f} / {tech_info.max_capacity_mw:,.0f} MW  \n"
+                f"• **Investering:** {tech_info.capex_per_mw:.1f} MSEK / MW  \n"
+                f"• **Byggtid:** {tech_info.build_time_years} år"
+            )
 
-    with col_inv2:
-        capacity_input = st.number_input(
-            "Ange kapacitet att bygga (MW):",
-            min_value=50,
-            max_value=20000,
-            value=500,
-            step=50
-        )
-        total_cost = capacity_input * tech_info.capex_per_mw
-        st.metric("Beräknad total investeringskostnad", f"{total_cost:,.1f} MSEK".replace(",", " "))
+        with col_inv2:
+            capacity_input = st.number_input(
+                "Ange ny kapacitet (MW):",
+                min_value=50, max_value=20000, value=500, step=50, key="build_mw"
+            )
+            total_cost = capacity_input * tech_info.capex_per_mw
+            st.metric("Total investeringskostnad", f"{total_cost:,.1f} MSEK".replace(",", " "))
 
-        if st.button("🔨 Starta Byggprojekt", type="primary", use_container_width=True):
-            success, msg = sim.start_construction(tech_choice, capacity_input)
-            if success:
-                st.success(msg)
-                st.rerun()
-            else:
-                st.error(msg)
+            if st.button("🔨 Starta Nybyggnation", type="primary", use_container_width=True):
+                success, msg = sim.start_construction(tech_choice, capacity_input)
+                if success:
+                    st.success(msg)
+                    st.rerun()
+                else:
+                    st.error(msg)
 
-    st.divider()
+    with inv_tab2:
+        col_ren1, col_ren2 = st.columns(2)
+        with col_ren1:
+            ren_choice = st.selectbox(
+                "Välj kraftslag att renovera:",
+                options=list(TECH_CATALOG.keys()),
+                format_func=lambda x: TECH_CATALOG[x].name,
+                key="ren_select"
+            )
+            ren_info = TECH_CATALOG[ren_choice]
+            old_plants = [p for p in sim.fleet if p.tech_name == ren_choice and p.age >= int(ren_info.lifespan_years * 0.4)]
+            avail_ren_mw = sum(p.capacity_mw for p in old_plants)
+            
+            ren_capex = ren_info.capex_per_mw * 0.35
+            ren_time = max(1, ren_info.build_time_years // 2)
+
+            st.warning(
+                f"**Renoveringsfakta ({ren_info.name}):**  \n"
+                f"• **Tillgängligt för renovering (>40% ålder):** {avail_ren_mw:,.0f} MW  \n"
+                f"• **Renoveringskostnad:** {ren_capex:.1f} MSEK / MW (35% av nypris)  \n"
+                f"• **Genomförandetid:** {ren_time} år"
+            )
+
+        with col_ren2:
+            ren_capacity_input = st.number_input(
+                "Kapacitet att livstidsförlänga (MW):",
+                min_value=50, max_value=max(50, int(avail_ren_mw)), value=min(500, max(50, int(avail_ren_mw))), step=50, key="ren_mw"
+            )
+            total_ren_cost = ren_capacity_input * ren_capex
+            st.metric("Total renoveringskostnad", f"{total_ren_cost:,.1f} MSEK".replace(",", " "))
+
+            if st.button("🔧 Starta Renovering", type="primary", use_container_width=True):
+                success, msg = sim.renovate_fleet(ren_choice, ren_capacity_input)
+                if success:
+                    st.success(msg)
+                    st.rerun()
+                else:
+                    st.error(msg)
     
     # 4. Kör simulering
     st.subheader("4. Kör simulering")
