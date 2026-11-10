@@ -51,6 +51,9 @@ tab1, tab2 = st.tabs(["🏗️ Översikt & Investering", "📊 Resultat & Histor
 # ------------------------------------------------------------------------------
 # FLIK 1: ÖVERSIKT & INVESTERING (FÖRSTASIDAN)
 # ------------------------------------------------------------------------------
+# ------------------------------------------------------------------------------
+# FLIK 1: ÖVERSIKT & INVESTERING (FÖRSTASIDAN)
+# ------------------------------------------------------------------------------
 with tab1:
     # 1. Nuvarande Kapacitetsfördelning
     st.subheader("1. Nuvarande installerad kapacitet i elnätet")
@@ -59,31 +62,59 @@ with tab1:
     for plant in sim.fleet:
         name = TECH_CATALOG[plant.tech_name].name
         fleet_summary[name] = fleet_summary.get(name, 0.0) + plant.capacity_mw
-    
-    cols = st.columns(len(fleet_summary))
-    for idx, (tech_name, cap) in enumerate(fleet_summary.items()):
-        cols[idx].metric(label=tech_name, value=f"{cap:,.0f} MW".replace(",", " "))
-    
+
+    tech_items = list(fleet_summary.items())
+
+    # Rad 1: De 4 största kraftslagen
+    col_row1 = st.columns(4)
+    for idx, (tech_name, cap) in enumerate(tech_items[:4]):
+        col_row1[idx].metric(label=tech_name, value=f"{cap:,.0f} MW".replace(",", " "))
+
+    # Rad 2: Resterande 3 kraftslag
+    col_row2 = st.columns(3)
+    for idx, (tech_name, cap) in enumerate(tech_items[4:]):
+        col_row2[idx].metric(label=tech_name, value=f"{cap:,.0f} MW".replace(",", " "))
+
+    # Visuellt diagram över nuvarande elmix
+    df_cap = pd.DataFrame(list(fleet_summary.items()), columns=["Kraftslag", "Installerad effekt (MW)"]).set_index("Kraftslag")
+    st.bar_chart(df_cap, height=220)
+
     st.divider()
 
     # 2. Teknikkatalog & Jämförelsetabell
     st.subheader("2. Jämförelse av alla kraftslag & Investeringskalkyl")
     
-    catalog_data = []
+    catalog_list = []
     for key, t in TECH_CATALOG.items():
-        catalog_data.append({
-            "Kod": key,
+        catalog_list.append({
             "Kraftslag": t.name,
-            "Investering (MSEK/MW)": f"{t.capex_per_mw:.1f}",
-            "Fast drift (MSEK/MW/år)": f"{t.opex_fix_per_mw:.2f}",
-            "Byggtid (år)": t.build_time_years,
-            "Livslängd (år)": t.lifespan_years,
-            "Marginalkostnad (SEK/MWh)": f"{t.marginal_cost:.0f}",
-            "Kapacitetsfaktor": f"{t.base_cap_factor*100:.0f}%",
+            "Investering": t.capex_per_mw,
+            "Fast drift": t.opex_fix_per_mw,
+            "Byggtid": t.build_time_years,
+            "Livslängd": t.lifespan_years,
+            "Marginalkostnad": t.marginal_cost,
+            "Kapacitetsfaktor": t.base_cap_factor,
             "Väderberoende": "Ja" if t.is_variable else "Nej"
         })
     
-    st.dataframe(pd.DataFrame(catalog_data), use_container_width=True, hide_index=True)
+    df_cat = pd.DataFrame(catalog_list)
+    
+    # Formaterad tabell med renare rubriker och grafisk framstegsindikator
+    st.dataframe(
+        df_cat,
+        use_container_width=True,
+        hide_index=True,
+        column_config={
+            "Kraftslag": st.column_config.TextColumn("Kraftslag", width="medium"),
+            "Investering": st.column_config.NumberColumn("Investering", format="%.1f MSEK/MW"),
+            "Fast drift": st.column_config.NumberColumn("Fast drift", format="%.2f MSEK/MW/år"),
+            "Byggtid": st.column_config.NumberColumn("Byggtid", format="%d år"),
+            "Livslängd": st.column_config.NumberColumn("Livslängd", format="%d år"),
+            "Marginalkostnad": st.column_config.NumberColumn("Marginalkostnad", format="%.0f SEK/MWh"),
+            "Kapacitetsfaktor": st.column_config.ProgressColumn("Kapacitetsutnyttjande", format="%.0f%%", min_value=0.0, max_value=1.0),
+            "Väderberoende": st.column_config.TextColumn("Väderberoende", width="small")
+        }
+    )
     
     st.divider()
 
@@ -134,7 +165,6 @@ with tab1:
         res = sim.run_year()
         st.session_state.history.append(res)
         st.rerun()
-
 # ------------------------------------------------------------------------------
 # FLIK 2: RESULTAT, EKONOMI & HISTORIK
 # ------------------------------------------------------------------------------
