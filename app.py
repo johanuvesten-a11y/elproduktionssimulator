@@ -3,10 +3,8 @@ import pandas as pd
 from engine import SimulationEngine
 from config import TECH_CATALOG
 
-# Konfigurera sidan med bred layout
 st.set_page_config(page_title="Sveriges Elsimulator", layout="wide", initial_sidebar_state="expanded")
 
-# Initialisera simulator och historik i sessionsminnet
 if "sim" not in st.session_state:
     st.session_state.sim = SimulationEngine()
     st.session_state.history = []
@@ -14,7 +12,7 @@ if "sim" not in st.session_state:
 sim = st.session_state.sim
 
 # ==============================================================================
-# SIDOPANEL: Status & Huvudknappar
+# SIDOPANEL: Status & Snabbåtgärder
 # ==============================================================================
 st.sidebar.title("⚡ Elnätet i korthet")
 st.sidebar.markdown(f"**Nuvarande år:** {sim.year}")
@@ -23,8 +21,8 @@ st.sidebar.metric("Tillgänglig Budget", f"{sim.budget_msek:,.1f} MSEK".replace(
 
 tot_cap = sum(p.capacity_mw for p in sim.fleet)
 st.sidebar.metric("Installerad effekt", f"{tot_cap:,.0f} MW".replace(",", " "))
+st.sidebar.metric("Efterfrågetillväxt", f"{sim.demand_growth_rate * 100:.1f} % / år")
 
-# Huvudåtgärd: Kör nästa år
 st.sidebar.divider()
 if st.sidebar.button("⏩ Simulera nästa år (1 år)", type="primary", use_container_width=True):
     res = sim.run_year()
@@ -48,40 +46,36 @@ if st.sidebar.button("🔄 Börja om spelet", type="secondary", use_container_wi
     st.rerun()
 
 # ==============================================================================
-# HUVUDOMRÅDE - DASHBOARD LAYOUT
+# HUVUDOMRÅDE
 # ==============================================================================
 st.title("⚡ Sveriges Elproduktionssimulator")
 
 tab1, tab2 = st.tabs(["🎮 Manöverrum & Investering", "📊 Resultat & Historik"])
 
 # ------------------------------------------------------------------------------
-# FLIK 1: MANÖVERRUM (KOMPAKT 2-KOLUMNS-LAYOUT)
+# FLIK 1: MANÖVERRUM
 # ------------------------------------------------------------------------------
 with tab1:
-    # --- NYTT: Senaste årets resultat längst upp ---
     if st.session_state.history:
         latest = st.session_state.history[-1]
         st.subheader(f"Senaste årsrapport (År {latest['year']})")
         
-        m1, m2, m3, m4 = st.columns(4)
+        m1, m2, m3, m4, m5 = st.columns(5)
         m1.metric("Elbehov", f"{latest['demand_twh']:.1f} TWh")
-        m2.metric("Produktion", f"{latest['produced_twh']:.1f} TWh")
-        m3.metric("Medelpris", f"{latest['avg_price_sek']:.1f} SEK/MWh")
-        m4.metric("Nettoresultat", f"{latest['net_profit_msek']:,.1f} MSEK".replace(",", " "))
+        m2.metric("Inhemsk Prod.", f"{latest['produced_twh']:.1f} TWh")
+        m3.metric("Elimport", f"{latest['imported_twh']:.2f} TWh")
+        m4.metric("Medelpris", f"{latest['avg_price_sek']:.1f} SEK/MWh")
+        m5.metric("Nettoresultat", f"{latest['net_profit_msek']:,.1f} MSEK".replace(",", " "))
 
         if latest['blackout_hours'] > 0:
             st.error(f"🚨 **{latest['blackout_hours']} timmars effektbrist!**")
         if latest['retired_mw'] > 0:
-            st.warning(f"ℹ️ {latest['retired_mw']:,.0f} MW avvecklades.")
+            st.warning(f"ℹ️ {latest['retired_mw']:,.0f} MW avvecklades under året.")
         
         st.divider()
-    # ----------------------------------------------
 
     col_left, col_right = st.columns([1, 1], gap="medium")
     
-    # --------------------------------------------------------------------------
-    # VÄNSTER KOLUMN: Nuvarande status & Elmix
-    # --------------------------------------------------------------------------
     with col_left:
         st.subheader("1. Nuvarande Elmix & Kapacitet")
         
@@ -91,14 +85,12 @@ with tab1:
             fleet_summary[name] = fleet_summary.get(name, 0.0) + plant.capacity_mw
             
         df_cap = pd.DataFrame(list(fleet_summary.items()), columns=["Kraftslag", "Kapacitet (MW)"])
-        
         st.bar_chart(df_cap.set_index("Kraftslag"), height=200)
 
-        # --- NYTT: Status för kommande ombyggnadsbehov ---
         st.subheader("⚠️ Kommande ombyggnadsbehov")
         needs_renovation = []
         for key, t in TECH_CATALOG.items():
-            old_plants = [p for p in sim.fleet if p.tech_name == key and p.age >= int(t.lifespan_years * 0.8)] # Visar anläggningar som uppnått 80% av sin livslängd
+            old_plants = [p for p in sim.fleet if p.tech_name == key and p.age >= int(t.lifespan_years * 0.8)]
             cap = sum(p.capacity_mw for p in old_plants)
             if cap > 0:
                 needs_renovation.append(f"**{t.name}:** {cap:,.0f} MW närmar sig slutet av sin livslängd.")
@@ -108,7 +100,6 @@ with tab1:
                 st.warning(item)
         else:
             st.success("Inga akuta ombyggnadsbehov just nu.")
-        # -------------------------------------------------
 
         with st.expander("ℹ️ Visa alla kraftslag & Investeringskalkyl"):
             catalog_list = []
@@ -120,7 +111,7 @@ with tab1:
                     "Investering": t.capex_per_mw,
                     "Byggtid": t.build_time_years,
                     "Marginalkostnad": t.marginal_cost,
-                    "Utnyttjande": t.base_cap_factor, # Lämna som float för ProgressColumn
+                    "Utnyttjande": t.base_cap_factor,
                 })
             
             df_cat = pd.DataFrame(catalog_list)
@@ -132,25 +123,14 @@ with tab1:
                     "Investering": st.column_config.NumberColumn("MSEK/MW", format="%.1f"),
                     "Byggtid": st.column_config.NumberColumn("Byggtid", format="%d år"),
                     "Marginalkostnad": st.column_config.NumberColumn("SEK/MWh", format="%.0f"),
-                    # Använder ProgressColumn med ett min och max-värde (0 till 1)
-                    # Tooltip förklarar begreppet.
-                    "Utnyttjande": st.column_config.ProgressColumn(
-                        "Utnyttjande", 
-                        help="Kapacitetsfaktor: Hur stor del av maxkapaciteten som i genomsnitt produceras (0-100%).",
-                        format="%.2f",
-                        min_value=0.0, 
-                        max_value=1.0
-                    ),
+                    "Utnyttjande": st.column_config.ProgressColumn("Utnyttjande", format="%.2f", min_value=0.0, max_value=1.0),
                 }
             )
 
-    # --------------------------------------------------------------------------
-    # HÖGER KOLUMN: Investera och Renovera
-    # --------------------------------------------------------------------------
     with col_right:
         st.subheader("2. Åtgärder & Investeringar")
         
-        inv_tab1, inv_tab2 = st.tabs(["🏗️ Bygg nytt", "🔧 Renovera"])
+        inv_tab1, inv_tab2, inv_tab3, inv_tab4 = st.tabs(["🏗️ Bygg nytt", "🔧 Renovera", "💡 Effektivisering", "🌐 Import"])
         
         with inv_tab1:
             tech_choice = st.selectbox(
@@ -190,7 +170,6 @@ with tab1:
                 key="ren_select"
             )
             ren_info = TECH_CATALOG[ren_choice]
-            # Renovering möjlig när 40% av livslängden passerats
             old_plants = [p for p in sim.fleet if p.tech_name == ren_choice and p.age >= int(ren_info.lifespan_years * 0.4)]
             avail_ren_mw = sum(p.capacity_mw for p in old_plants)
             
@@ -217,6 +196,30 @@ with tab1:
                 else:
                     st.error(msg)
 
+        with inv_tab3:
+            st.markdown("**Energieffektiviseringsprogram**")
+            st.caption(
+                f"Investera i isolering, smarta elnät och industriell effektivisering. "
+                f"Sänker den årliga efterfrågetillväxten med 0,3 procentenheter (Nuvarande: {sim.demand_growth_rate * 100:.1f}%)."
+            )
+            st.markdown("**Kostnad:** `4 000 MSEK` per steg")
+
+            if st.button("💡 Investera i Effektivisering", type="primary", use_container_width=True):
+                success, msg = sim.invest_efficiency()
+                if success:
+                    st.success(msg)
+                    st.rerun()
+                else:
+                    st.error(msg)
+
+        with inv_tab4:
+            st.markdown("**Utlandsförbindelser & Elimport**")
+            st.caption(
+                f"Sverige har maximalt **{sim.max_import_mw:,.0f} MW** importkapacitet från grannländer. "
+                f"Om den inhemska produktionen inte räcker importeras el automatiskt till **1 500 SEK/MWh** innan effektbrist uppstår."
+            )
+            st.info("💡 Importen aktiveras automatiskt under bristmånader.")
+
 # ------------------------------------------------------------------------------
 # FLIK 2: RESULTAT & HISTORIK
 # ------------------------------------------------------------------------------
@@ -224,27 +227,6 @@ with tab2:
     if not st.session_state.history:
         st.info("Ingen simulering har körts än. Klicka på **Simulera nästa år** i sidopanelen till vänster.")
     else:
-        latest = st.session_state.history[-1]
-        
-        st.subheader(f"Årsrapport År {latest['year']}")
-        
-        m1, m2, m3, m4 = st.columns(4)
-        m1.metric("Elbehov", f"{latest['demand_twh']:.1f} TWh")
-        m2.metric("Produktion", f"{latest['produced_twh']:.1f} TWh")
-        m3.metric("Medelpris", f"{latest['avg_price_sek']:.1f} SEK/MWh")
-        m4.metric("Nettoresultat", f"{latest['net_profit_msek']:,.1f} MSEK".replace(",", " "))
-
-        if latest['blackout_hours'] > 0:
-            st.error(f"🚨 **Varning:** {latest['blackout_hours']} timmars effektbrist inträffade under året!")
-        else:
-            st.success("✅ **Stabil elförsörjning:** Inga timmar med effektbrist.")
-
-        if latest['retired_mw'] > 0:
-            st.warning(f"ℹ️ **Avveckling:** {latest['retired_mw']:,.0f} MW nådde sin livslängd och avvecklades.".replace(",", " "))
-
-        st.divider()
-        
-        # Historisk tabell
         st.subheader("📜 Historisk årsöversikt")
         df_history = pd.DataFrame(st.session_state.history)
         
@@ -252,11 +234,11 @@ with tab2:
             "year": "År",
             "demand_twh": "Elbehov (TWh)",
             "produced_twh": "Produktion (TWh)",
+            "imported_twh": "Import (TWh)",
             "avg_price_sek": "Medelpris (SEK/MWh)",
-            "revenue_msek": "Intäkter (MSEK)",
             "net_profit_msek": "Nettoresultat (MSEK)",
             "blackout_hours": "Effektbrist (timmar)",
-            "retired_mw": "Avvecklad effekt (MW)",
+            "growth_rate": "Tillväxt (%)",
             "budget_msek": "Budget (MSEK)"
         }
         
@@ -270,4 +252,4 @@ with tab2:
             st.line_chart(df_display.set_index("År")[["Medelpris (SEK/MWh)"]])
         with chart_col2:
             st.markdown("**Produktion vs Elbehov (TWh)**")
-            st.line_chart(df_display.set_index("År")[["Elbehov (TWh)", "Produktion (TWh)"]])
+            st.line_chart(df_display.set_index("År")[["Elbehov (TWh)", "Produktion (TWh)", "Import (TWh)"]])
