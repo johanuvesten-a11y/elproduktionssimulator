@@ -9,7 +9,20 @@ if "sim" not in st.session_state:
     st.session_state.sim = SimulationEngine()
     st.session_state.history = []
 
+# Initialisera simulator och historik i sessionsminnet
+if "sim" not in st.session_state:
+    st.session_state.sim = SimulationEngine()
+    st.session_state.history = []
+
 sim = st.session_state.sim
+
+# Säkerställ bakåtkompatibilitet ifall en gammal session ligger kvar i minnet
+if not hasattr(sim, "max_import_mw"):
+    sim.max_import_mw = 8000.0
+if not hasattr(sim, "demand_growth_rate"):
+    sim.demand_growth_rate = 0.025
+if not hasattr(sim, "efficiency_level"):
+    sim.efficiency_level = 0
 
 # ==============================================================================
 # SIDOPANEL: Status & Snabbåtgärder
