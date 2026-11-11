@@ -3,7 +3,7 @@ import pandas as pd
 from engine import SimulationEngine
 from config import TECH_CATALOG
 
-# Konfigurera sidan
+# Konfigurera sidan med bred layout
 st.set_page_config(page_title="Sveriges Elsimulator", layout="wide", initial_sidebar_state="expanded")
 
 # Initialisera simulator och historik i sessionsminnet
@@ -14,7 +14,7 @@ if "sim" not in st.session_state:
 sim = st.session_state.sim
 
 # ==============================================================================
-# SIDOPANEL: Status & Snabbåtgärder
+# SIDOPANEL: Status & Huvudknappar (Alltid synliga utan scroll)
 # ==============================================================================
 st.sidebar.title("⚡ Elnätet i korthet")
 st.sidebar.markdown(f"**Nuvarande år:** {sim.year}")
@@ -22,11 +22,18 @@ st.sidebar.markdown(f"**Nuvarande år:** {sim.year}")
 st.sidebar.metric("Tillgänglig Budget", f"{sim.budget_msek:,.1f} MSEK".replace(",", " "))
 
 tot_cap = sum(p.capacity_mw for p in sim.fleet)
-st.sidebar.metric("Total installerad effekt", f"{tot_cap:,.0f} MW".replace(",", " "))
+st.sidebar.metric("Installerad effekt", f"{tot_cap:,.0f} MW".replace(",", " "))
+
+# Huvudåtgärd: Kör nästa år
+st.sidebar.divider()
+if st.sidebar.button("⏩ Simulera nästa år (1 år)", type="primary", use_container_width=True):
+    res = sim.run_year()
+    st.session_state.history.append(res)
+    st.rerun()
 
 st.sidebar.subheader("🏗️ Pågående byggprojekt")
 if not sim.construction_queue:
-    st.sidebar.info("Inga aktiva byggprojekt för tillfället.")
+    st.sidebar.info("Inga aktiva byggen.")
 else:
     for c in sim.construction_queue:
         tech_name = TECH_CATALOG.get(c.tech_name, None)
@@ -41,91 +48,70 @@ if st.sidebar.button("🔄 Börja om spelet", type="secondary", use_container_wi
     st.rerun()
 
 # ==============================================================================
-# HUVUDOMRÅDE
+# HUVUDOMRÅDE - DASHBOARD LAYOUT
 # ==============================================================================
 st.title("⚡ Sveriges Elproduktionssimulator")
-st.caption("Modellera Sveriges elförsörjning, analysera kraftslag och investera strategiskt för att möta framtidens elbehov.")
 
-tab1, tab2 = st.tabs(["🏗️ Översikt & Investering", "📊 Resultat & Historik"])
+tab1, tab2 = st.tabs(["🎮 Manöverrum & Investering", "📊 Resultat & Historik"])
 
 # ------------------------------------------------------------------------------
-# FLIK 1: ÖVERSIKT & INVESTERING (FÖRSTASIDAN)
-# ------------------------------------------------------------------------------
-# ------------------------------------------------------------------------------
-# FLIK 1: ÖVERSIKT & INVESTERING (FÖRSTASIDAN)
+# FLIK 1: MANÖVERRUM (KOMPAKT 2-KOLUMNS-LAYOUT)
 # ------------------------------------------------------------------------------
 with tab1:
-    # 1. Nuvarande Kapacitetsfördelning
-    st.subheader("1. Nuvarande installerad kapacitet i elnätet")
+    col_left, col_right = st.columns([1, 1], gap="medium")
     
-    fleet_summary = {}
-    for plant in sim.fleet:
-        name = TECH_CATALOG[plant.tech_name].name
-        fleet_summary[name] = fleet_summary.get(name, 0.0) + plant.capacity_mw
+    # --------------------------------------------------------------------------
+    # VÄNSTER KOLUMN: Nuvarande status & Elmix
+    # --------------------------------------------------------------------------
+    with col_left:
+        st.subheader("1. Nuvarande Elmix & Kapacitet")
+        
+        fleet_summary = {}
+        for plant in sim.fleet:
+            name = TECH_CATALOG[plant.tech_name].name
+            fleet_summary[name] = fleet_summary.get(name, 0.0) + plant.capacity_mw
+            
+        df_cap = pd.DataFrame(list(fleet_summary.items()), columns=["Kraftslag", "Kapacitet (MW)"])
+        
+        # Kompakt stapeldiagram
+        st.bar_chart(df_cap.set_index("Kraftslag"), height=200)
 
-    tech_items = list(fleet_summary.items())
+        # Hopfällbar detaljerad teknikkatalog
+        with st.expander("ℹ️ Visa alla kraftslag & Investeringskalkyl"):
+            catalog_list = []
+            for key, t in TECH_CATALOG.items():
+                installed = sim.get_installed_capacity(key)
+                catalog_list.append({
+                    "Kraftslag": t.name,
+                    "Nu/Max": f"{installed:,.0f}/{t.max_capacity_mw:,.0f} MW".replace(",", " "),
+                    "Investering": t.capex_per_mw,
+                    "Byggtid": t.build_time_years,
+                    "Marginalkostnad": t.marginal_cost,
+                    "Kapacitetsfaktor": t.base_cap_factor,
+                })
+            
+            df_cat = pd.DataFrame(catalog_list)
+            st.dataframe(
+                df_cat,
+                use_container_width=True,
+                hide_index=True,
+                column_config={
+                    "Investering": st.column_config.NumberColumn("MSEK/MW", format="%.1f"),
+                    "Byggtid": st.column_config.NumberColumn("Byggtid", format="%d år"),
+                    "Marginalkostnad": st.column_config.NumberColumn("SEK/MWh", format="%.0f"),
+                    "Kapacitetsfaktor": st.column_config.ProgressColumn("Utnyttjande", format="%.0f%%", min_value=0.0, max_value=1.0),
+                }
+            )
 
-    # Rad 1: De 4 största kraftslagen
-    col_row1 = st.columns(4)
-    for idx, (tech_name, cap) in enumerate(tech_items[:4]):
-        col_row1[idx].metric(label=tech_name, value=f"{cap:,.0f} MW".replace(",", " "))
-
-    # Rad 2: Resterande 3 kraftslag
-    col_row2 = st.columns(3)
-    for idx, (tech_name, cap) in enumerate(tech_items[4:]):
-        col_row2[idx].metric(label=tech_name, value=f"{cap:,.0f} MW".replace(",", " "))
-
-    # Visuellt diagram över nuvarande elmix
-    df_cap = pd.DataFrame(list(fleet_summary.items()), columns=["Kraftslag", "Installerad effekt (MW)"]).set_index("Kraftslag")
-    st.bar_chart(df_cap, height=220)
-
-    st.divider()
-
-# 2. Teknikkatalog & Jämförelsetabell med Kapacitetstak
-    st.subheader("2. Jämförelse av alla kraftslag & Investeringskalkyl")
-    
-    catalog_list = []
-    for key, t in TECH_CATALOG.items():
-        installed = sim.get_installed_capacity(key)
-        catalog_list.append({
-            "Kraftslag": t.name,
-            "Installerad / Tak": f"{installed:,.0f} / {t.max_capacity_mw:,.0f} MW".replace(",", " "),
-            "Investering": t.capex_per_mw,
-            "Fast drift": t.opex_fix_per_mw,
-            "Byggtid": t.build_time_years,
-            "Livslängd": t.lifespan_years,
-            "Marginalkostnad": t.marginal_cost,
-            "Kapacitetsfaktor": t.base_cap_factor,
-        })
-    
-    df_cat = pd.DataFrame(catalog_list)
-    
-    st.dataframe(
-        df_cat,
-        use_container_width=True,
-        hide_index=True,
-        column_config={
-            "Kraftslag": st.column_config.TextColumn("Kraftslag", width="medium"),
-            "Installerad / Tak": st.column_config.TextColumn("Nuvarande / Max Tak", width="medium"),
-            "Investering": st.column_config.NumberColumn("Investering", format="%.1f MSEK/MW"),
-            "Fast drift": st.column_config.NumberColumn("Fast drift", format="%.2f MSEK/MW/år"),
-            "Byggtid": st.column_config.NumberColumn("Byggtid", format="%d år"),
-            "Livslängd": st.column_config.NumberColumn("Livslängd", format="%d år"),
-            "Marginalkostnad": st.column_config.NumberColumn("Marginalkostnad", format="%.0f SEK/MWh"),
-            "Kapacitetsfaktor": st.column_config.ProgressColumn("Kapacitetsutnyttjande", format="%.0f%%", min_value=0.0, max_value=1.0),
-        }
-    )
-    
-    st.divider()
-
-    # 3. Investera / Renovera Formulär
-    st.subheader("3. Utbyggnad & Livstidsförlängning")
-    
-    inv_tab1, inv_tab2 = st.tabs(["🏗️ Bygg nytt kraftslag", "🔧 Renovera befintliga verk"])
-    
-    with inv_tab1:
-        col_inv1, col_inv2 = st.columns(2)
-        with col_inv1:
+    # --------------------------------------------------------------------------
+    # HÖGER KOLUMN: Investera och Renovera
+    # --------------------------------------------------------------------------
+    with col_right:
+        st.subheader("2. Åtgärder & Investeringar")
+        
+        inv_tab1, inv_tab2 = st.tabs(["🏗️ Bygg nytt", "🔧 Renovera"])
+        
+        with inv_tab1:
             tech_choice = st.selectbox(
                 "Välj kraftslag att bygga:",
                 options=list(TECH_CATALOG.keys()),
@@ -135,20 +121,17 @@ with tab1:
             tech_info = TECH_CATALOG[tech_choice]
             curr_cap = sim.get_installed_capacity(tech_choice)
             
-            st.info(
-                f"**Fakta ({tech_info.name}):**  \n"
-                f"• **Kapacitetstak:** {curr_cap:,.0f} / {tech_info.max_capacity_mw:,.0f} MW  \n"
-                f"• **Investering:** {tech_info.capex_per_mw:.1f} MSEK / MW  \n"
-                f"• **Byggtid:** {tech_info.build_time_years} år"
+            st.caption(
+                f"**{tech_info.name}:** Max-tak {curr_cap:,.0f}/{tech_info.max_capacity_mw:,.0f} MW | "
+                f"Pris {tech_info.capex_per_mw:.1f} MSEK/MW | Byggtid {tech_info.build_time_years} år"
             )
 
-        with col_inv2:
             capacity_input = st.number_input(
-                "Ange ny kapacitet (MW):",
+                "Kapacitet (MW):",
                 min_value=50, max_value=20000, value=500, step=50, key="build_mw"
             )
             total_cost = capacity_input * tech_info.capex_per_mw
-            st.metric("Total investeringskostnad", f"{total_cost:,.1f} MSEK".replace(",", " "))
+            st.markdown(f"**Total kostnad:** `{total_cost:,.1f} MSEK`".replace(",", " "))
 
             if st.button("🔨 Starta Nybyggnation", type="primary", use_container_width=True):
                 success, msg = sim.start_construction(tech_choice, capacity_input)
@@ -158,9 +141,7 @@ with tab1:
                 else:
                     st.error(msg)
 
-    with inv_tab2:
-        col_ren1, col_ren2 = st.columns(2)
-        with col_ren1:
+        with inv_tab2:
             ren_choice = st.selectbox(
                 "Välj kraftslag att renovera:",
                 options=list(TECH_CATALOG.keys()),
@@ -174,20 +155,17 @@ with tab1:
             ren_capex = ren_info.capex_per_mw * 0.35
             ren_time = max(1, ren_info.build_time_years // 2)
 
-            st.warning(
-                f"**Renoveringsfakta ({ren_info.name}):**  \n"
-                f"• **Tillgängligt för renovering (>40% ålder):** {avail_ren_mw:,.0f} MW  \n"
-                f"• **Renoveringskostnad:** {ren_capex:.1f} MSEK / MW (35% av nypris)  \n"
-                f"• **Genomförandetid:** {ren_time} år"
+            st.caption(
+                f"**Tillgängligt för renovering:** {avail_ren_mw:,.0f} MW | "
+                f"Kostnad {ren_capex:.1f} MSEK/MW | Tid {ren_time} år"
             )
 
-        with col_ren2:
             ren_capacity_input = st.number_input(
-                "Kapacitet att livstidsförlänga (MW):",
+                "Renovera volym (MW):",
                 min_value=50, max_value=max(50, int(avail_ren_mw)), value=min(500, max(50, int(avail_ren_mw))), step=50, key="ren_mw"
             )
             total_ren_cost = ren_capacity_input * ren_capex
-            st.metric("Total renoveringskostnad", f"{total_ren_cost:,.1f} MSEK".replace(",", " "))
+            st.markdown(f"**Total kostnad:** `{total_ren_cost:,.1f} MSEK`".replace(",", " "))
 
             if st.button("🔧 Starta Renovering", type="primary", use_container_width=True):
                 success, msg = sim.renovate_fleet(ren_choice, ren_capacity_input)
@@ -196,25 +174,17 @@ with tab1:
                     st.rerun()
                 else:
                     st.error(msg)
-    
-    # 4. Kör simulering
-    st.subheader("4. Kör simulering")
-    if st.button("⏩ Simulera nästa år (1 år framåt)", type="primary", use_container_width=True):
-        res = sim.run_year()
-        st.session_state.history.append(res)
-        st.rerun()
+
 # ------------------------------------------------------------------------------
-# FLIK 2: RESULTAT, EKONOMI & HISTORIK
+# FLIK 2: RESULTAT & HISTORIK
 # ------------------------------------------------------------------------------
 with tab2:
-    st.header("📊 Resultat, Ekonomi & Historik")
-    
     if not st.session_state.history:
-        st.info("Ingen simulering har körts än. Gå till fliken **Översikt & Investering** och klicka på **Simulera nästa år**.")
+        st.info("Ingen simulering har körts än. Klicka på **Simulera nästa år** i sidopanelen till vänster.")
     else:
         latest = st.session_state.history[-1]
         
-        st.subheader(f"Årsrapport för År {latest['year']}")
+        st.subheader(f"Årsrapport År {latest['year']}")
         
         m1, m2, m3, m4 = st.columns(4)
         m1.metric("Elbehov", f"{latest['demand_twh']:.1f} TWh")
@@ -223,18 +193,17 @@ with tab2:
         m4.metric("Nettoresultat", f"{latest['net_profit_msek']:,.1f} MSEK".replace(",", " "))
 
         if latest['blackout_hours'] > 0:
-            st.error(f"🚨 **Varning:** Nätet drabbades av **{latest['blackout_hours']} timmars effektbrist** under året!")
+            st.error(f"🚨 **Varning:** {latest['blackout_hours']} timmars effektbrist inträffade under året!")
         else:
-            st.success("✅ **Stabil elförsörjning:** Inga timmar med effektbrist uppstod.")
+            st.success("✅ **Stabil elförsörjning:** Inga timmar med effektbrist.")
 
         if latest['retired_mw'] > 0:
-            st.warning(f"ℹ️ **Avveckling:** {latest['retired_mw']:,.0f} MW anläggningar nådde sin livslängd och togs ur bruk.".replace(",", " "))
+            st.warning(f"ℹ️ **Avveckling:** {latest['retired_mw']:,.0f} MW nådde sin livslängd och avvecklades.".replace(",", " "))
 
         st.divider()
         
-        # Snygg historisk tabell med svenska rubriker och enhetsformatering
+        # Historisk tabell
         st.subheader("📜 Historisk årsöversikt")
-        
         df_history = pd.DataFrame(st.session_state.history)
         
         column_mapping = {
@@ -246,36 +215,17 @@ with tab2:
             "net_profit_msek": "Nettoresultat (MSEK)",
             "blackout_hours": "Effektbrist (timmar)",
             "retired_mw": "Avvecklad effekt (MW)",
-            "budget_msek": "Kvarvarande budget (MSEK)"
+            "budget_msek": "Budget (MSEK)"
         }
         
         df_display = df_history.rename(columns=column_mapping)
-        
-        st.dataframe(
-            df_display,
-            use_container_width=True,
-            hide_index=True,
-            column_config={
-                "År": st.column_config.NumberColumn("År", format="%d"),
-                "Elbehov (TWh)": st.column_config.NumberColumn("Elbehov", format="%.2f TWh"),
-                "Produktion (TWh)": st.column_config.NumberColumn("Produktion", format="%.2f TWh"),
-                "Medelpris (SEK/MWh)": st.column_config.NumberColumn("Medelpris", format="%.1f SEK"),
-                "Intäkter (MSEK)": st.column_config.NumberColumn("Intäkter", format="%,.1f MSEK"),
-                "Nettoresultat (MSEK)": st.column_config.NumberColumn("Nettoresultat", format="%,.1f MSEK"),
-                "Effektbrist (timmar)": st.column_config.NumberColumn("Effektbrist", format="%d tim"),
-                "Avvecklad effekt (MW)": st.column_config.NumberColumn("Avvecklat", format="%,.0f MW"),
-                "Kvarvarande budget (MSEK)": st.column_config.NumberColumn("Budget", format="%,.1f MSEK"),
-            }
-        )
+        st.dataframe(df_display, use_container_width=True, hide_index=True)
 
         st.divider()
-        st.subheader("📈 Trendanalys över tid")
-        
         chart_col1, chart_col2 = st.columns(2)
         with chart_col1:
             st.markdown("**Elprisutveckling (SEK/MWh)**")
             st.line_chart(df_display.set_index("År")[["Medelpris (SEK/MWh)"]])
-            
         with chart_col2:
             st.markdown("**Produktion vs Elbehov (TWh)**")
             st.line_chart(df_display.set_index("År")[["Elbehov (TWh)", "Produktion (TWh)"]])
