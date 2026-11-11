@@ -7,13 +7,14 @@ class SimulationEngine:
     def __init__(self):
         self.year = 2026
         self.budget_msek = 45000.0
-        self.fleet: List[PlantFleet] = list(START_FLEET)
+        self.fleet: List[PlantFleet] = [PlantFleet(p.tech_name, p.capacity_mw, p.age) for p in START_FLEET]
         self.construction_queue: List[ConstructionProject] = []
         self.base_annual_demand_twh = 140.0
-        self.demand_growth_rate = 0.025
+        self.demand_growth_rate = 0.025  # Startar på 2.5 % per år
+        self.max_import_mw = 8000.0       # Max utlandskapacitet
+        self.efficiency_level = 0
 
     def get_installed_capacity(self, tech_key: str) -> float:
-        """Beräknar total installerad + byggande kapacitet för ett kraftslag."""
         fleet_cap = sum(p.capacity_mw for p in self.fleet if p.tech_name == tech_key)
         building_cap = sum(c.capacity_mw for c in self.construction_queue if c.tech_name == tech_key and not c.is_refurbishment)
         return fleet_cap + building_cap
@@ -23,7 +24,6 @@ class SimulationEngine:
         if not tech:
             return False, "Okänt kraftslag."
 
-        # Kontrollera Kapacitetstak
         current_cap = self.get_installed_capacity(tech_key)
         if current_cap + capacity_mw > tech.max_capacity_mw:
             remaining_mw = max(0.0, tech.max_capacity_mw - current_cap)
@@ -49,12 +49,10 @@ class SimulationEngine:
         return True, f"Bygge startat! {capacity_mw:,.0f} MW {tech.name}. Klart om {tech.build_time_years} år. Kostnad: {cost:,.1f} MSEK."
 
     def renovate_fleet(self, tech_key: str, capacity_mw: float) -> Tuple[bool, str]:
-        """Renoverar/livstidsförlänger befintliga kraftverk (35 % av CAPEX-kostnad, halva byggtiden)."""
         tech = TECH_CATALOG.get(tech_key)
         if not tech:
             return False, "Okänt kraftslag."
 
-        # Beräkna hur mycket gammal kapacitet som finns tillgänglig att renovera (ålder > 40% av livslängd)
         old_plants = [p for p in self.fleet if p.tech_name == tech_key and p.age >= int(tech.lifespan_years * 0.4)]
         available_mw = sum(p.capacity_mw for p in old_plants)
 
@@ -79,9 +77,21 @@ class SimulationEngine:
         )
         return True, f"Renovering startad! {capacity_mw:,.0f} MW {tech.name}. Klart om {build_time} år. Kostnad: {cost:,.1f} MSEK."
 
+    def invest_efficiency(self) -> Tuple[bool, str]:
+        cost = 4000.0
+        if self.budget_msek < cost:
+            return False, f"Otillräcklig budget för energieffektivisering ({cost:,.0f} MSEK krävs)."
+        if self.demand_growth_rate <= 0.005:
+            return False, "Maximal energieffektivisering uppnådd (0,5 % lägsta tillväxt)."
+
+        self.budget_msek -= cost
+        self.demand_growth_rate = max(0.005, self.demand_growth_rate - 0.003)
+        self.efficiency_level += 1
+        return True, f"Energieffektivisering genomförd! Årlig efterfrågetillväxt sänkt till {self.demand_growth_rate * 100:.1f} %."
+
     def run_year(self) -> Dict:
         annual_demand_twh = self.base_annual_demand_twh * ((1 + self.demand_growth_rate) ** (self.year - 2026))
-        
+
         # Uppdatera bygg- och renoveringsprojekt
         finished_projects = []
         for proj in self.construction_queue:
@@ -89,16 +99,15 @@ class SimulationEngine:
             if proj.years_remaining <= 0:
                 finished_projects.append(proj)
                 if proj.is_refurbishment:
-                    # Återställ ålder på renoverad volym
                     renovated_remaining = proj.capacity_mw
                     for plant in sorted(self.fleet, key=lambda x: x.age, reverse=True):
                         if plant.tech_name == proj.tech_name and renovated_remaining > 0:
                             take_mw = min(plant.capacity_mw, renovated_remaining)
-                            plant.age = 0  # Nollställ åldern
+                            plant.age = 0
                             renovated_remaining -= take_mw
                 else:
                     self.fleet.append(PlantFleet(proj.tech_name, proj.capacity_mw, age=0))
-        
+
         for p in finished_projects:
             self.construction_queue.remove(p)
 
@@ -116,6 +125,7 @@ class SimulationEngine:
 
         # Kör 12 månaders elproduktion
         total_produced_twh = 0.0
+        total_imported_twh = 0.0
         total_revenue_msek = 0.0
         total_var_opex_msek = 0.0
         blackout_hours = 0
@@ -161,6 +171,16 @@ class SimulationEngine:
 
                 total_var_opex_msek += (dispatch_mwh * tech.opex_var_per_mwh) / 1e6
 
+            # Elimport vid inhemskt underskott (upp till 8 000 MW till 1 500 SEK/MWh)
+            if m_needed_mwh > 0:
+                max_import_mwh = self.max_import_mw * hours_in_month
+                import_mwh = min(m_needed_mwh, max_import_mwh)
+                m_needed_mwh -= import_mwh
+                total_imported_twh += import_mwh / 1e6
+                m_spot_price = max(m_spot_price, 1500.0)
+                total_var_opex_msek += (import_mwh * 1500.0) / 1e6
+
+            # Om underskott kvarstår efter max import -> Effektbrist
             if m_needed_mwh > 0:
                 blackout_hours += int((m_needed_mwh / (m_demand_mwh / hours_in_month)))
                 m_spot_price = 3000.0
@@ -184,10 +204,12 @@ class SimulationEngine:
             "year": self.year - 1,
             "demand_twh": annual_demand_twh,
             "produced_twh": total_produced_twh,
+            "imported_twh": total_imported_twh,
             "avg_price_sek": avg_price,
             "revenue_msek": total_revenue_msek,
             "net_profit_msek": net_profit_msek,
             "blackout_hours": blackout_hours,
             "retired_mw": retired_capacity,
-            "budget_msek": self.budget_msek
+            "budget_msek": self.budget_msek,
+            "growth_rate": self.demand_growth_rate
         }
