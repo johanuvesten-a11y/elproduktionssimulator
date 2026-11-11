@@ -14,7 +14,7 @@ if "sim" not in st.session_state:
 sim = st.session_state.sim
 
 # ==============================================================================
-# SIDOPANEL: Status & Huvudknappar (Alltid synliga utan scroll)
+# SIDOPANEL: Status & Huvudknappar
 # ==============================================================================
 st.sidebar.title("⚡ Elnätet i korthet")
 st.sidebar.markdown(f"**Nuvarande år:** {sim.year}")
@@ -58,6 +58,25 @@ tab1, tab2 = st.tabs(["🎮 Manöverrum & Investering", "📊 Resultat & Histori
 # FLIK 1: MANÖVERRUM (KOMPAKT 2-KOLUMNS-LAYOUT)
 # ------------------------------------------------------------------------------
 with tab1:
+    # --- NYTT: Senaste årets resultat längst upp ---
+    if st.session_state.history:
+        latest = st.session_state.history[-1]
+        st.subheader(f"Senaste årsrapport (År {latest['year']})")
+        
+        m1, m2, m3, m4 = st.columns(4)
+        m1.metric("Elbehov", f"{latest['demand_twh']:.1f} TWh")
+        m2.metric("Produktion", f"{latest['produced_twh']:.1f} TWh")
+        m3.metric("Medelpris", f"{latest['avg_price_sek']:.1f} SEK/MWh")
+        m4.metric("Nettoresultat", f"{latest['net_profit_msek']:,.1f} MSEK".replace(",", " "))
+
+        if latest['blackout_hours'] > 0:
+            st.error(f"🚨 **{latest['blackout_hours']} timmars effektbrist!**")
+        if latest['retired_mw'] > 0:
+            st.warning(f"ℹ️ {latest['retired_mw']:,.0f} MW avvecklades.")
+        
+        st.divider()
+    # ----------------------------------------------
+
     col_left, col_right = st.columns([1, 1], gap="medium")
     
     # --------------------------------------------------------------------------
@@ -73,10 +92,24 @@ with tab1:
             
         df_cap = pd.DataFrame(list(fleet_summary.items()), columns=["Kraftslag", "Kapacitet (MW)"])
         
-        # Kompakt stapeldiagram
         st.bar_chart(df_cap.set_index("Kraftslag"), height=200)
 
-        # Hopfällbar detaljerad teknikkatalog
+        # --- NYTT: Status för kommande ombyggnadsbehov ---
+        st.subheader("⚠️ Kommande ombyggnadsbehov")
+        needs_renovation = []
+        for key, t in TECH_CATALOG.items():
+            old_plants = [p for p in sim.fleet if p.tech_name == key and p.age >= int(t.lifespan_years * 0.8)] # Visar anläggningar som uppnått 80% av sin livslängd
+            cap = sum(p.capacity_mw for p in old_plants)
+            if cap > 0:
+                needs_renovation.append(f"**{t.name}:** {cap:,.0f} MW närmar sig slutet av sin livslängd.")
+        
+        if needs_renovation:
+            for item in needs_renovation:
+                st.warning(item)
+        else:
+            st.success("Inga akuta ombyggnadsbehov just nu.")
+        # -------------------------------------------------
+
         with st.expander("ℹ️ Visa alla kraftslag & Investeringskalkyl"):
             catalog_list = []
             for key, t in TECH_CATALOG.items():
@@ -87,7 +120,7 @@ with tab1:
                     "Investering": t.capex_per_mw,
                     "Byggtid": t.build_time_years,
                     "Marginalkostnad": t.marginal_cost,
-                    "Kapacitetsfaktor": t.base_cap_factor,
+                    "Utnyttjande": t.base_cap_factor, # Lämna som float för ProgressColumn
                 })
             
             df_cat = pd.DataFrame(catalog_list)
@@ -99,7 +132,15 @@ with tab1:
                     "Investering": st.column_config.NumberColumn("MSEK/MW", format="%.1f"),
                     "Byggtid": st.column_config.NumberColumn("Byggtid", format="%d år"),
                     "Marginalkostnad": st.column_config.NumberColumn("SEK/MWh", format="%.0f"),
-                    "Kapacitetsfaktor": st.column_config.ProgressColumn("Utnyttjande", format="%.0f%%", min_value=0.0, max_value=1.0),
+                    # Använder ProgressColumn med ett min och max-värde (0 till 1)
+                    # Tooltip förklarar begreppet.
+                    "Utnyttjande": st.column_config.ProgressColumn(
+                        "Utnyttjande", 
+                        help="Kapacitetsfaktor: Hur stor del av maxkapaciteten som i genomsnitt produceras (0-100%).",
+                        format="%.2f",
+                        min_value=0.0, 
+                        max_value=1.0
+                    ),
                 }
             )
 
@@ -149,6 +190,7 @@ with tab1:
                 key="ren_select"
             )
             ren_info = TECH_CATALOG[ren_choice]
+            # Renovering möjlig när 40% av livslängden passerats
             old_plants = [p for p in sim.fleet if p.tech_name == ren_choice and p.age >= int(ren_info.lifespan_years * 0.4)]
             avail_ren_mw = sum(p.capacity_mw for p in old_plants)
             
